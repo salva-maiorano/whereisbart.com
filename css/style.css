@@ -79,7 +79,6 @@ a:hover {
 
 #map {
   margin: 0 0 0 250px;
-  height: 75%;
 }
 
 .station-icon {
@@ -181,12 +180,20 @@ a:hover {
   font-size: 12px;
   width: 250px;
   position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
   padding: 5px 5px;
+  padding-bottom: 20px;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
 }
 
 #legend ul {
   padding: 2px;
   margin: 0;
+  flex-shrink: 0;
 }
 
 #legend ul li {
@@ -213,6 +220,7 @@ a:hover {
 #status {
   clear: both;
   padding: 15px 5px;
+  flex-shrink: 0;
 }
 
 #last_updated {
@@ -225,6 +233,22 @@ a:hover {
 
 #development {
   visibility: hidden;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+#debugOutput {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: auto;
+  padding: 5px;
+  font-size: 10px;
+  font-family: monospace;
+  background-color: #f5f5f5;
+  word-wrap: break-word;
 }
 
 #disclaimer {

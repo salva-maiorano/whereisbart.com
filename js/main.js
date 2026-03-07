@@ -594,6 +594,10 @@ function debug(text) {
 
 function sizeWindow() {
   $('#map').height($(window).height() - 40);
+  // Invalidate Leaflet map size to make it react to resize
+  if (map) {
+    map.invalidateSize();
+  }
 }
 
 function developmentMode() {
@@ -614,7 +618,7 @@ function updateClock() {
 // On page load
 $(document).ready(function() {
   sizeWindow();
-  window.onResize = sizeWindow;
+  window.onresize = sizeWindow;
   setupMap();
   buildTimes();
   getBART();
