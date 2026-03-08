@@ -82,18 +82,16 @@ a:hover {
 }
 
 .station-icon {
-  border: 1px solid #222222;
-  background-color: #199bd8;
-  border-radius: 4px;
-  overflow: hidden;
-  width: 9px;
-  height: 9px;
-  color: #000000;
-  line-height: 14px;
-  overflow: hidden;
-  border-radius: 8px;
-  font-size: 7px;
-  text-align: center;
+  width: 13px;
+  height: 13px;
+  background-color: #FFFFFF;
+  background-image: url(../images/bart80.png);
+  background-size: 100%;
+  background-repeat: no-repeat;
+  background-position: center;
+  border: 1px solid #4AA8D8;
+  border-radius: 3px;
+  opacity: 1;
 }
 
 .train-icon {

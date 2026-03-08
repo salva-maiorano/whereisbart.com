@@ -4,7 +4,6 @@
 var BART_API_URI = 'https://api.bart.gov/api/';
 var BART_API_KEY = 'MW9S-E7SL-26DU-VV8V';
 var REFRESH_FREQ = 5000; // in millis
-var STATION_OPACITY = 0.6;
 
 // config
 var routeTimes = [];
@@ -75,9 +74,18 @@ function showStationInfo(station) {
     });
   });
   var stationInfo = 'Station: <b>' + station.name + '</b>';
+  stationInfo += debug('<br>Key: ' + station.abbr);
+
+  var stationData = stations[station.abbr];
   platforms.forEach(function(platform, platId) {
     platform.trains.sort((a, b) => toInt(a.mins) - toInt(b.mins));
-    stationInfo += '<br>Platform ' + platId + ': ' + platform.dir;
+    // Use actual direction from station data if available, fallback to API direction
+    var dirLabel = platform.dir
+    var platformDirKey = 'platform' + platId + 'Dir';
+    if (stationData && stationData[platformDirKey]) {
+      dirLabel = stationData[platformDirKey];
+    }
+    stationInfo += '<br>Platform ' + platId + ': ' + dirLabel;
     platform.trains.forEach(function(train) {
       stationInfo += '<br>' + train.mins + ' min -- ' + debug(train.destId + ': ') + train.dest + ' (' + train.color.toLowerCase() + ')';
     });
@@ -302,13 +310,11 @@ function drawStations() {
     var marker = new L.Marker(new L.LatLng(station.lat, station.lng), {
       icon: L.divIcon({
         className: 'station-icon',
-        iconSize: [
-          9, 9
-        ],
+        iconSize: [14, 14],
       }),
       title: station.name,
       zIndexOffset: 100,
-      opacity: STATION_OPACITY
+      opacity: 1
     });
     marker.bindPopup('Station: <b>' + station.name + '</b>');
     marker.on('click', function() {
