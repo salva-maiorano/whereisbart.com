@@ -17,6 +17,7 @@ var showingStation;
 var activeMarker;
 var selectedTrain;
 var stationTrainETA = [];
+var selectedRouteColor = null; // for route filtering
 
 // debugging
 var debugMode = false;
@@ -216,6 +217,10 @@ function drawLiveTrains(trains) {
     debug += '<br>(del) ' + getTrainShortInfo(trainMarker.train);
   });
   liveTrains = renewTrains;
+
+  // Apply route filter visibility to all trains
+  updateTrainVisibility();
+
   return debug;
 }
 
@@ -634,6 +639,38 @@ function updateClock() {
     refreshCountDown -= 1000;
     $('#clock span').html(refreshCountDown / 1000);
   }
+}
+
+/*----------------------------------------------------------------------*\
+    Route Filtering
+\*----------------------------------------------------------------------*/
+function toggleRouteFilter(color) {
+  // Toggle: if same color clicked, clear filter; otherwise set new filter
+  if (selectedRouteColor === color) {
+    selectedRouteColor = null;
+  } else {
+    selectedRouteColor = color;
+  }
+
+  // Update UI to show which route is selected
+  $('.route-filter').removeClass('active');
+  if (selectedRouteColor) {
+    $('.route-filter[data-color="' + selectedRouteColor + '"]').addClass('active');
+  }
+
+  // Update train visibility
+  updateTrainVisibility();
+}
+
+function updateTrainVisibility() {
+  liveTrains.forEach(function(trainMarker) {
+    var trainColor = trainMarker.train.color;
+    if (!selectedRouteColor || trainColor === selectedRouteColor) {
+      trainMarker.marker.setOpacity(1);
+    } else {
+      trainMarker.marker.setOpacity(0.25);
+    }
+  });
 }
 
 // On page load
