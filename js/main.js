@@ -291,7 +291,9 @@ function drawRoutePath() {
   drawRoutePathDone = true;
 
   routePath.forEach(function(segment) {
-    var latlngs = segment.waypoints.map(function(point) {
+    var waypoints = getRoutePath(segment.start, segment.end);
+    if (!waypoints) return;
+    var latlngs = waypoints.map(function(point) {
       return [point.lat, point.lng];
     });
 
