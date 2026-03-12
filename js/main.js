@@ -74,7 +74,7 @@ function showStationInfo(station) {
       platforms[plat].trains.push({mins: estimate.minutes, destId: destination.abbreviation, dest: destination.destination, color: estimate.color})
     });
   });
-  var stationInfo = 'Station: <b>' + station.name + '</b>';
+  var stationInfo = 'Station: <a href="https://www.bart.gov/schedules/stnsched/' + station.abbr + '" target="_blank" rel="noopener" title="BART station info"><b>' + station.name + '</b> ⧉</a>';
   stationInfo += debug('<br>Key: ' + station.abbr);
 
   var stationData = stations[station.abbr];
