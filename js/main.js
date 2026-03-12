@@ -87,7 +87,8 @@ function showStationInfo(station) {
     }
     stationInfo += '<br>Platform ' + platId + ': ' + dirLabel;
     platform.trains.forEach(function(train) {
-      stationInfo += '<br>' + train.mins + ' min -- ' + debug(train.destId + ': ') + train.dest + ' (' + train.color.toLowerCase() + ')';
+      stationInfo += '<br>' + train.mins + (train.mins === 'Leaving' ? '' : ' min') + ' -- '
+          + debug(train.destId + ': ') + train.dest + ' (' + train.color.toLowerCase() + ')';
     });
     stationInfo += '<br>';
   });
@@ -160,7 +161,7 @@ function computeLiveTrains(data, trains) {
               est: estimate
             };
           }
-        } else {
+        } else if (estimate.color != 'WHITE') { // ignore not in service trains
           debug += '<br>Link NotFound: ' + estimate.color + ', ' + station.abbr + '->' + destination.abbreviation + ',' + estimate.direction;
         }
       });
@@ -237,13 +238,14 @@ function extractPreviousLiveTrain(train, trains) {
 }
 
 function getRouteInfo(color, curr, dest) {
-  if (!routes[color]) {
+  var route = routes[color];
+  if (!route) {
     return;
   }
 
-  var route = routes[color].stations;
-  var currIdx = route.indexOf(curr);
-  var destIdx = route.indexOf(dest);
+  var stations = route.stations;
+  var currIdx = stations.indexOf(curr);
+  var destIdx = stations.indexOf(dest);
   if (currIdx < 0 || destIdx < 0) {
     return;
   }
@@ -252,19 +254,19 @@ function getRouteInfo(color, curr, dest) {
   var nextIdx = Math.min(Math.max(currIdx + (
     dirUp
     ? 1
-    : -1), 0), route.length - 1);
+    : -1), 0), stations.length - 1);
   var prevIdx = Math.min(Math.max(currIdx - (
     dirUp
     ? 1
-    : -1), 0), route.length - 1);
+    : -1), 0), stations.length - 1);
   return {
     icon: dirUp
-      ? routes[color].iconUp
-      : routes[color].iconDown,
-    prev: route[prevIdx]
-      ? route[prevIdx]
+      ? route.iconUp
+      : route.iconDown,
+    prev: stations[prevIdx]
+      ? stations[prevIdx]
       : '',
-    next: route[nextIdx]
+    next: stations[nextIdx]
   };
 }
 
@@ -436,6 +438,9 @@ function setTrainPopup(marker, train) {
   }
 
   var markerText = '<b>' + destination.destination + '</b> Train';
+  // Add Show ETA button
+  markerText += '&nbsp;&nbsp;<button class="show-eta-btn" onclick="onShowETAClick()">ETA</button>';
+
   if (estimate.minutes == 'Leaving') {
     markerText += '<br>Leaving Station: <b>' + stations[station.abbr].name + '</b>';
   } else {
@@ -466,19 +471,27 @@ function moveTrains() {
     Train Selection and Station Train ETA
 \*----------------------------------------------------------------------*/
 function onTrainClick(trainMarker) {
-  // Toggle selection if clicking the same train
-  if (selectedTrain === trainMarker) {
+  // Clear any existing ETAs when clicking a different train
+  if (selectedTrain !== trainMarker) {
     clearStationTrainETA();
-    selectedTrain = null;
-    return;
   }
 
   // Update selection
-  clearStationTrainETA();
   selectedTrain = trainMarker;
+}
+
+function onShowETAClick() {
+  if (!selectedTrain) {
+    return;
+  }
+  // Toggle ETAs if already showing for this train
+  if (stationTrainETA.length > 0) {
+    clearStationTrainETA();
+    return;
+  }
 
   // Validate route exists
-  var train = trainMarker.train;
+  var train = selectedTrain.train;
   var route = routes[train.color];
   if (!route) {
     return;
