@@ -3,14 +3,14 @@
 // constants
 var BART_API_URI = 'https://api.bart.gov/api/';
 var BART_API_KEY = 'MW9S-E7SL-26DU-VV8V';
-var REFRESH_FREQ = 5000; // in millis
+var FREQ_GET_BART = 5000; // in millis
+var FREQ_MOVE_TRAINS = 1000; // in millis
 
 // config
 var routeTimes = [];
 
 // runtime data
 var map;
-var refreshCountDown = REFRESH_FREQ; // in millis
 var lastProcTime;
 var liveTrains = [];
 var showingStation;
@@ -66,11 +66,8 @@ function showStationInfo(station) {
     asArray(destination.estimate).forEach(function(estimate) {
       var plat = estimate.platform;
       if (!platforms[plat]) {
-        platforms[plat] = {
-          dir: estimate.direction,
-          trains: []
-        }
-      };
+        platforms[plat] = {dir: estimate.direction, trains: []};
+      }
       platforms[plat].trains.push({mins: estimate.minutes, destId: destination.abbreviation, dest: destination.destination, color: estimate.color})
     });
   });
@@ -106,8 +103,7 @@ function getBART() {
 function processBART(xml) {
   // Parse XML
   var data = $.xml2json(xml);
-  refreshCountDown = REFRESH_FREQ;
-  // some times we get the same data, or responses out of order, in such case, we just ignore them
+  // sometimes we get the same data, or responses out of order, in such case, we just ignore them
   if (lastProcTime >= data.time) {
     return;
   }
@@ -244,14 +240,14 @@ function extractPreviousLiveTrain(train, trains) {
 function getRouteInfo(color, curr, dest) {
   var route = routes[color];
   if (!route) {
-    return;
+    return null;
   }
 
   var stations = route.stations;
   var currIdx = stations.indexOf(curr);
   var destIdx = stations.indexOf(dest);
   if (currIdx < 0 || destIdx < 0) {
-    return;
+    return null;
   }
 
   var dirUp = currIdx < destIdx;
@@ -263,15 +259,10 @@ function getRouteInfo(color, curr, dest) {
     dirUp
     ? 1
     : -1), 0), stations.length - 1);
-  return {
-    icon: dirUp
-      ? route.iconUp
-      : route.iconDown,
-    prev: stations[prevIdx]
-      ? stations[prevIdx]
-      : '',
-    next: stations[nextIdx]
-  };
+  let icon = dirUp ? route.iconUp : route.iconDown;
+  let prev = stations[prevIdx] ? stations[prevIdx] : '';
+  let next = stations[nextIdx];
+  return {icon: icon, prev: prev, next: next};
 }
 
 /*----------------------------------------------------------------------*\
@@ -376,7 +367,7 @@ function getTrainPosition(toStationCode, fromStationCode, percent) {
     return {lat: toStation.lat, lng: toStation.lng, bearing: 0};
   }
 
-  console.log('Missing route path for ' + fromStationCode + ' -> ' + toStationCode + 'waypoints: ' + waypoints);
+  console.log('Missing route path for ' + fromStationCode + ' -> ' + toStationCode + ', waypoints: ' + waypoints);
 
   // Fallback to simple linear interpolation if no route path available
   var lat = fromStation.lat + ((toStation.lat - fromStation.lat) * percent);
@@ -405,12 +396,11 @@ function createMarker(train, position) {
     popupAnchor: anchors.popupAnchor
   });
 
-  var marker = new L.Marker(new L.LatLng(position.lat, position.lng), {
+  return new L.Marker(new L.LatLng(position.lat, position.lng), {
     icon: icon,
     title: `${train.etd.destination} bound train`,
     zIndexOffset: 1000
   });
-  return marker;
 }
 
 function createTrainMarker(train) {
@@ -653,7 +643,7 @@ function calculateStationETA(i, startIdx, step, train, routeStations, cumulative
 function createETAMarker(station, timeToStation) {
   var timeString = minsToTime(timeToStation);
   var trainEtaIcon = L.divIcon({
-    className: 'station-train-eta`',
+    className: 'station-train-eta',
     html: '<div class="train-eta-time">' + timeString + '</div>',
     iconSize: [45, 20],
     iconAnchor: [22.5, 25]
@@ -723,13 +713,6 @@ function developmentMode() {
   if (debugMode) drawRoutePath();
 }
 
-function updateClock() {
-  if (refreshCountDown > 0) {
-    refreshCountDown -= 1000;
-    $('#clock span').html(refreshCountDown / 1000);
-  }
-}
-
 /*----------------------------------------------------------------------*\
     Route Filtering
 \*----------------------------------------------------------------------*/
@@ -769,7 +752,6 @@ $(document).ready(function() {
   setupMap();
   buildTimes();
   getBART();
-  setInterval(updateClock, 1000);
-  setInterval(getBART, REFRESH_FREQ);
-  setInterval(moveTrains, 1000);
+  setInterval(getBART, FREQ_GET_BART);
+  setInterval(moveTrains, FREQ_MOVE_TRAINS);
 });
