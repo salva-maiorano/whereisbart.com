@@ -94,6 +94,25 @@ a:hover {
   opacity: 1;
 }
 
+.minute-marker {
+  background: none;
+  border: none;
+}
+
+.minute-marker span {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 8px;
+  height: 8px;
+  background-color: #ffffff;
+  border: 1px solid #0066cc;
+  border-radius: 50%;
+  font-size: 7px;
+  font-weight: bold;
+  color: #0066cc;
+}
+
 .train-icon {
   width: 18px;
   height: 14px;

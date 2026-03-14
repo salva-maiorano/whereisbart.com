@@ -116,12 +116,6 @@ var routePath = [
   { start: 'BERY', end: 'MLPT', waypoints: [
     {lat: 37.398735, lng: -121.884826}
   ]},
-  // CAST to BAYF
-  { start: 'CAST', end: 'BAYF', waypoints: [
-    {lat: 37.690581, lng: -122.091947},
-    {lat: 37.688565, lng: -122.111820},
-    {lat: 37.689898, lng: -122.116210}
-  ]},
   // CAST to WDUB
   { start: 'CAST', end: 'WDUB', waypoints: [
     {lat: 37.693577, lng: -122.049975},
@@ -403,6 +397,7 @@ var routePathCache = {};
  * Get route path between two stations
  * Uses station coordinates for first and last waypoints
  * Results are cached for performance
+ * either returns null, or an array of at least 2 waypoints, including the start and end stations
  */
 function getRoutePath(fromStation, toStation) {
   // Check cache first
@@ -415,35 +410,28 @@ function getRoutePath(fromStation, toStation) {
   var toStationData = stations[toStation];
 
   if (!fromStationData || !toStationData) {
+    console.log('Missing station data for ' + fromStation + ' or ' + toStation);
     return null;
   }
 
   var fromPoint = {lat: fromStationData.lat, lng: fromStationData.lng};
   var toPoint = {lat: toStationData.lat, lng: toStationData.lng};
-  var waypoints = null;
-
+  var waypoints = [fromPoint];
   for (var i = 0; i < routePath.length; i++) {
     var segment = routePath[i];
     if (segment.start === fromStation && segment.end === toStation) {
       // Build waypoints: station start + intermediate waypoints + station end
-      waypoints = [fromPoint];
       waypoints = waypoints.concat(segment.waypoints);
-      waypoints.push(toPoint);
+      break;
+    }
+    if (segment.start === toStation && segment.end === fromStation) {
+      // Reverse: from station + reversed intermediate waypoints + to station
+      waypoints = waypoints.concat(segment.waypoints.slice().reverse());
       break;
     }
   }
-
-  if (!waypoints) {
-    for (var i = 0; i < routePath.length; i++) {
-      var segment = routePath[i];
-      if (segment.start === toStation && segment.end === fromStation) {
-        // Reverse: station start + reversed intermediate waypoints + station end
-        waypoints = [toPoint];
-        waypoints = waypoints.concat(segment.waypoints.slice().reverse());
-        waypoints.push(fromPoint);
-        break;
-      }
-    }
+  if (fromStation !== toStation) {
+    waypoints.push(toPoint);
   }
 
   // Store in cache (even null results to avoid recomputing)
@@ -456,11 +444,11 @@ function getRoutePath(fromStation, toStation) {
  * Returns an object with lat, lng, and bearing (direction of travel)
  */
 function getPositionAlongRoute(waypoints, percent) {
-  if (!waypoints || waypoints.length < 2) {
-    if (waypoints && waypoints.length === 1) {
-      return {lat: waypoints[0].lat, lng: waypoints[0].lng, bearing: 0};
-    }
+  if (!waypoints || waypoints.length == 0) {
     return null;
+  }
+  if (waypoints.length === 1) {
+    return {lat: waypoints[0].lat, lng: waypoints[0].lng, bearing: 0};
   }
   var totalDistance = 0;
   var distances = [0];
@@ -469,7 +457,7 @@ function getPositionAlongRoute(waypoints, percent) {
     totalDistance += dist;
     distances.push(totalDistance);
   }
-  var targetDistance = totalDistance * (1 - percent);
+  var targetDistance = totalDistance * (percent);
   for (var i = 1; i < distances.length; i++) {
     if (targetDistance <= distances[i]) {
       var segmentStart = distances[i-1];

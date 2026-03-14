@@ -135,8 +135,8 @@ function computeLiveTrains(data, trains) {
         var route = getRouteInfo(estimate.color, station.abbr, destination.abbreviation);
         if (route) {
           var legMins = routeTimes[station.abbr][route.prev];
-          if (!legMins) {
-            legMins = 0;
+          if (!legMins || estimate.minutes == 'Leaving') {
+            legMins = 0; // no legMins also means at the end of the segment
           }
           var estimateMins = toInt(estimate.minutes);
           var destKey = estimate.color + '_' + destination.abbreviation;
@@ -152,7 +152,6 @@ function computeLiveTrains(data, trains) {
               forStation: station.abbr,
               prevStation: route.prev,
               nextStation: route.next,
-              next: station.abbr,
               etaMins: estimateMins,
               legMins: legMins,
               valid: true,
@@ -163,7 +162,7 @@ function computeLiveTrains(data, trains) {
             };
           }
         } else if (estimate.color != 'WHITE') { // ignore not in service trains
-          debug += '<br>Link NotFound: ' + estimate.color + ', ' + station.abbr + '->' + destination.abbreviation + ',' + estimate.direction;
+          debug += '<br>Link NotFound: ' + estimate.color + ': ' + station.abbr + '->' + destination.abbreviation + ',' + estimate.direction;
         }
       });
     });
@@ -192,10 +191,9 @@ function drawLiveTrains(trains) {
     for (var stationIdx in trains[destIdx]) {
       var train = trains[destIdx][stationIdx];
       if (train.valid) {
-        var position = getTrainPosition(train.forStation, train.prevStation, train.etaMins, train.legMins);
         var trainMarker = extractPreviousLiveTrain(train, liveTrains);
         if (!trainMarker) {
-          trainMarker = createTrainMarker(train, position)
+          trainMarker = createTrainMarker(train);
           map.addLayer(trainMarker.marker);
           // Store reference and add click handler
           trainMarker.marker._trainMarkerRef = trainMarker;
@@ -204,9 +202,10 @@ function drawLiveTrains(trains) {
           });
 
           debug += '<br>(add) ' + getTrainShortInfo(train);
-        } else if (position.lat != trainMarker.position.lat || position.lng != trainMarker.position.lng) {
+        } else {
+          // Existing train - update with new data
           trainMarker.train = train;
-          updateTrainMarker(trainMarker, position);
+          updateTrainMarker(trainMarker);
         }
         renewTrains.push(trainMarker);
       }
@@ -225,7 +224,7 @@ function drawLiveTrains(trains) {
 }
 
 function getTrainShortInfo(train) {
-  return train.forStation + ',  ' + train.color + ' -> ' + train.destStation + ': ' + train.etaMins;
+  return train.color + ": " + train.forStation + ' -> ' + train.destStation + ': ' + train.etaMins + "/" + train.legMins;
 }
 
 // search for train for a possible previous/same position from liveTrains
@@ -311,7 +310,33 @@ function drawRoutePath() {
 
     polyline.bindPopup('<b>Route:</b> ' + segment.start + ' → ' + segment.end);
     map.addLayer(polyline);
+    drawSegmentMinuteMarks(segment)
   });
+}
+
+// Add minute marks along the route, the point of estimated time of the train on the route
+function drawSegmentMinuteMarks(segment) {
+  var travelTime = routeTimes[segment.start] && routeTimes[segment.start][segment.end];
+  var waypoints = getRoutePath(segment.start, segment.end);
+  if (travelTime && travelTime > 1 && waypoints && waypoints.length >= 2) {
+    // Add markers at each minute interval (excluding start and end stations)
+    for (var minute = 1; minute < travelTime; minute++) {
+      var percent = minute / travelTime;
+      var position = getPositionAlongRoute(waypoints, percent);
+      if (position) {
+        var minuteMarker = L.marker([position.lat, position.lng], {
+          icon: L.divIcon({
+            className: 'minute-marker',
+            html: '<span>' + minute + '</span>',
+            iconSize: [12, 12],
+            iconAnchor: [6, 6]
+          })
+        });
+        minuteMarker.bindPopup('<b>' + segment.start + ' → ' + segment.end + '</b><br>Minute ' + minute + ' of ' + travelTime);
+        map.addLayer(minuteMarker);
+      }
+    }
+  }
 }
 
 function drawStations() {
@@ -333,38 +358,45 @@ function drawStations() {
   });
 }
 
-// Finds postion of trains.
-function getTrainPosition(toStationCode, fromStationCode, estimateMins, threshold) {
-  toStation = stations[toStationCode];
-  fromStation = stations[fromStationCode];
-
-  if (estimateMins > threshold) {
-    estimateMins = threshold;
-  }
-
-  var percent = (estimateMins + 0.25) / (threshold + 1.0);
-  if (estimateMins == 0) {
-    percent = 0;
-  }
-
+// Calculates train position as percentage along route from prevStation to forStation.
+// percent = 0 means at prevStation, percent = 1 means at forStation (next station)
+function getTrainPosition(toStationCode, fromStationCode, percent) {
   // Try to use detailed route path if available
   var waypoints = getRoutePath(fromStationCode, toStationCode);
-  if (waypoints && waypoints.length > 2) {
-    var position = getPositionAlongRoute(waypoints, percent);
+  if (waypoints && waypoints.length >= 2) {
+    var position = getPositionAlongRoute(waypoints, percent); // percent as distance from START
     if (position) {
       return position;
     }
   }
 
-  // Fallback to simple linear interpolation if no route path available
-  var lat = toStation.lat - ((toStation.lat - fromStation.lat) * percent);
-  var lng = toStation.lng - ((toStation.lng - fromStation.lng) * percent);
-  var bearing = getBearing(fromStation, toStation);
+  var toStation = stations[toStationCode];
+  var fromStation = stations[fromStationCode];
+  if (toStation == fromStation) {
+    return {lat: toStation.lat, lng: toStation.lng, bearing: 0};
+  }
 
+  console.log('Missing route path for ' + fromStationCode + ' -> ' + toStationCode + 'waypoints: ' + waypoints);
+
+  // Fallback to simple linear interpolation if no route path available
+  var lat = fromStation.lat + ((toStation.lat - fromStation.lat) * percent);
+  var lng = fromStation.lng + ((toStation.lng - fromStation.lng) * percent);
+  var bearing = getBearing(fromStation, toStation);
   return {lat: lat, lng: lng, bearing: bearing};
 }
 
-function createTrainMarker(train, position) {
+// Calculate the percentage along the route based on ETA and leg time.
+// Returns value from 0 (at prev station) to 1 (at next station), (legMins - etaMins) / legMins
+// When etaMins == legMins -> percent = 0 (at start)
+// When etaMins == 0 -> percent = 1 (at destination)
+function calculateRoutePercent(etaMins, legMins) {
+  if (legMins <= 0) {
+    return 1; // At station at the end of the leg if no legMins
+  }
+  return Math.max(0, Math.min(1, (legMins - Math.max(0, etaMins)) / legMins)); // max/min/max 🤪
+}
+
+function createMarker(train, position) {
   var anchors = calculateIconAnchor(position);
   var icon = L.divIcon({
     className: 'train-icon train-' + train.route.icon,
@@ -378,11 +410,29 @@ function createTrainMarker(train, position) {
     title: `${train.etd.destination} bound train`,
     zIndexOffset: 1000
   });
+  return marker;
+}
+
+function createTrainMarker(train) {
+  // New train - calculate initial position based on ETA/legMins
+  var actualLegMins = Math.max(train.etaMins, train.legMins); // sometimes the eta is greater than the legMins
+  var legPercent = calculateRoutePercent(train.etaMins, actualLegMins);
+  var position = getTrainPosition(train.forStation, train.prevStation, legPercent);
+  var marker = createMarker(train, position);
 
   var trainMarker = {
     train: train,
     position: position,
-    marker: marker
+    marker: marker,
+    actualLegMins: actualLegMins,
+    // Animation state
+    beginTimeMsec: Date.now(),
+    animationDuration: 60000,
+    beginLegPercent: legPercent,
+    currentLegPercent: legPercent,
+    moveToPercent: calculateRoutePercent(train.etaMins - 1, actualLegMins),
+    lastEtaMins: train.etaMins,
+    lastStation: train.forStation,
   };
 
   // Store reference to trainMarker object for click handler
@@ -392,16 +442,31 @@ function createTrainMarker(train, position) {
   return trainMarker;
 }
 
-function updateTrainMarker(trainMarker, position) {
-  trainMarker.adjCount = 30;
-  trainMarker.adjLat = (position.lat - trainMarker.position.lat) / trainMarker.adjCount;
-  trainMarker.adjLng = (position.lng - trainMarker.position.lng) / trainMarker.adjCount;
+function updateTrainMarker(trainMarker) {
+  var train = trainMarker.train;
 
-  var anchors = calculateIconAnchor(position);
-  trainMarker.marker.options.icon.options.iconAnchor = anchors.iconAnchor;
-  trainMarker.marker.options.icon.options.popupAnchor = anchors.popupAnchor;
+  if (train.forStation != trainMarker.lastStation) {
+    trainMarker.beginLegPercent = 0;
+    trainMarker.currentLegPercent = 0;
+    trainMarker.actualLegMins = Math.max(train.etaMins, train.legMins);
+    trainMarker.lastEtaMins = -1; // force recompute route
+    trainMarker.lastStation = train.forStation;
+  }
 
-  setTrainPopup(trainMarker.marker, trainMarker.train);
+  // Check if ETA changed
+  if (train.etaMins != trainMarker.lastEtaMins) {
+    // ETA changed - calculate where train currently is in the animation and use that as the new starting point
+    trainMarker.beginTimeMsec = Date.now();
+    // Use faster animation (15 seconds) when train has 0 leg (aka is "Leaving") to quickly reach station, otherwise a minute
+    trainMarker.animationDuration = train.legMins == 0 ? 15000 : 60000;
+    trainMarker.beginLegPercent = trainMarker.currentLegPercent;
+    trainMarker.moveToPercent = calculateRoutePercent(train.etaMins - 1, trainMarker.actualLegMins); // Animate to new target over 1 minute
+
+    // Update tracking state
+    trainMarker.lastEtaMins = train.etaMins;
+  }
+
+  setTrainPopup(trainMarker.marker, train);
 }
 
 // Calculate icon offset based on bearing
@@ -464,12 +529,36 @@ function setTrainPopup(marker, train) {
 }
 
 function moveTrains() {
-  liveTrains.forEach(function(train) {
-    if (train.adjCount) {
-      train.adjCount--;
-      train.position.lat += train.adjLat;
-      train.position.lng += train.adjLng;
-      train.marker.setLatLng(train.position);
+  var now = Date.now();
+
+  liveTrains.forEach(function (trainMarker) {
+    // Skip if no animation needed (already at target)
+    if (trainMarker.currentLegPercent >= trainMarker.moveToPercent) {
+      return;
+    }
+
+    var train = trainMarker.train;
+    // Calculate animation progress (0 to 1 over animationDuration)
+    var elapsed = now - trainMarker.beginTimeMsec;
+    var animationProgress = Math.min(1, elapsed / trainMarker.animationDuration);
+
+    // Interpolate between current and target percentages of the current leg
+    var begin = trainMarker.beginLegPercent;
+    var final = trainMarker.moveToPercent;
+    trainMarker.currentLegPercent = begin + (final - begin) * animationProgress;
+
+    var newPosition = getTrainPosition(train.forStation, train.prevStation, trainMarker.currentLegPercent);
+
+    if (newPosition) {
+      trainMarker.position.lat = newPosition.lat;
+      trainMarker.position.lng = newPosition.lng;
+      trainMarker.position.bearing = newPosition.bearing;
+      trainMarker.marker.setLatLng(trainMarker.position);
+
+      // Update icon anchor based on new bearing
+      var anchors = calculateIconAnchor(newPosition);
+      trainMarker.marker.options.icon.options.iconAnchor = anchors.iconAnchor;
+      trainMarker.marker.options.icon.options.popupAnchor = anchors.popupAnchor;
     }
   });
 }
