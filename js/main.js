@@ -99,18 +99,22 @@ function showStationInfo(station) {
     Bart Estimated
 \*----------------------------------------------------------------------*/
 function getBART() {
-  $.get(BART_API_URI + 'etd.aspx?cmd=etd&orig=ALL&key=' + BART_API_KEY + '&callback=?', processBART);
+  $.get(BART_API_URI + 'etd.aspx?cmd=etd&orig=ALL&key=' + BART_API_KEY + '&callback=?', processBARTxml);
 }
 
-function processBART(xml) {
+function processBARTxml(xml) {
   // Parse XML
   var data = $.xml2json(xml);
   // sometimes we get the same data, or responses out of order, in such case, we just ignore them
-  if (lastProcTime >= data.time) {
+  if (lastProcTime >= data.time || lastProcTime === "Manual") {
     return;
   }
   lastProcTime = data.time
+  storeBartData(data); // Store parsed JSON for save functionality
+  processBARTjson(data);
+}
 
+function processBARTjson(data) {
   $('#last_updated').html('Data as of <b>' + data.time + '</b>');
   var debug = 'Data: ' + data.time;
 
@@ -209,15 +213,22 @@ function drawLiveTrains(trains) {
       }
     }
   }
-  liveTrains.forEach(function(trainMarker) {
-    map.removeLayer(trainMarker.marker);
-    debug += '<br>(del) ' + getTrainShortInfo(trainMarker.train);
-  });
+  debug = removeLiveTrains(debug);
+
   liveTrains = renewTrains;
 
   // Apply route filter visibility to all trains
   updateTrainVisibility();
 
+  return debug;
+}
+
+function removeLiveTrains(debug) {
+  liveTrains.forEach(function (trainMarker) {
+    map.removeLayer(trainMarker.marker);
+    debug += '<br>(del) ' + getTrainShortInfo(trainMarker.train);
+  });
+  liveTrains = [];
   return debug;
 }
 
@@ -688,6 +699,70 @@ function displayTrainETAs(train, routeInfo) {
     map.addLayer(bubble);
     stationTrainETA.push(bubble);
   }
+}
+
+/*----------------------------------------------------------------------*\
+    Save/Load JSON Data
+\*----------------------------------------------------------------------*/
+var lastReceivedData = null;
+
+function saveCurrentData() {
+  if (!lastReceivedData) {
+    console.log('No data available to save');
+    return;
+  }
+
+  var now = new Date();
+  var timestamp = now.getFullYear() +
+    String(now.getMonth() + 1).padStart(2, '0') +
+    String(now.getDate()).padStart(2, '0') + '_' +
+    String(now.getHours()).padStart(2, '0') +
+    String(now.getMinutes()).padStart(2, '0') +
+    String(now.getSeconds()).padStart(2, '0');
+  var filename = 'bart_' + timestamp + '.json';
+
+  // Convert to formatted JSON string
+  var jsonString = JSON.stringify(lastReceivedData, null, 2);
+
+  // Create blob and download link
+  var blob = new Blob([jsonString], { type: 'application/json' });
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function loadDataFromFile(input) {
+  if (!input.files || !input.files[0]) {
+    return;
+  }
+
+  var file = input.files[0];
+  var reader = new FileReader();
+
+  reader.onload = function(e) {
+    try {
+      var data = JSON.parse(e.target.result);
+      console.log('Loaded JSON from file: ' + file.name);
+      lastProcTime = "Manual"
+      removeLiveTrains()
+      processBARTjson(data);
+    } catch (err) {
+      console.error('Error parsing JSON file:', err);
+    }
+  };
+
+  reader.readAsText(file);
+  // Reset the input so the same file can be loaded again
+  input.value = '';
+}
+
+function storeBartData(data) {
+  lastReceivedData = data;
 }
 
 /*----------------------------------------------------------------------*\
