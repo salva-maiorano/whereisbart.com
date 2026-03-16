@@ -78,10 +78,12 @@ function showStationInfo(station) {
   platforms.forEach(function(platform, platId) {
     platform.trains.sort((a, b) => toInt(a.mins) - toInt(b.mins));
     // Use actual direction from station data if available, fallback to API direction
-    var dirLabel = platform.dir
+    var dirLabel = platform.dir;
     var platformDirKey = 'platform' + platId + 'Dir';
     if (stationData && stationData[platformDirKey]) {
-      dirLabel = stationData[platformDirKey];
+      var dirKey = stationData[platformDirKey];
+      var dirInfo = platformDirections[dirKey];
+      dirLabel = !dirInfo ? dirKey : dirInfo.label;
     }
     stationInfo += '<br>Platform ' + platId + ': ' + dirLabel;
     platform.trains.forEach(function(train) {
