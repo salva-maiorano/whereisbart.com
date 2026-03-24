@@ -51,13 +51,11 @@ function getBartStation(stationKey, marker) {
     activeMarker = undefined;
     return;
   }
-  $.get(BART_API_URI + 'etd.aspx?cmd=etd&orig=' + stationKey + '&key=' + BART_API_KEY + '&callback=?', function(xml) {
-    // Parse XML
-    var data = $.xml2json(xml);
-    showingStation = data.station.abbr;
-    activeMarker = marker;
-    showStationInfo(data.station);
-  });
+  var station = lastReceivedData.station.find(station => station.abbr === stationKey);
+  showingStation = stationKey;
+  activeMarker = marker;
+  showStationInfo(station);
+  return;
 }
 
 function showStationInfo(station) {
@@ -110,25 +108,54 @@ function processBARTxml(xml) {
     return;
   }
   lastProcTime = data.time
-  storeBartData(data); // Store parsed JSON for save functionality
   processBARTjson(data);
 }
 
 function processBARTjson(data) {
   $('#last_updated').html('Data as of <b>' + data.time + '</b>');
   var debug = 'Data: ' + data.time;
-
+  fixLiveTrains(data);
+  trackReceivedBartData(data); // Store parsed JSON for save functionality
   var trains2 = [];
   debug += computeLiveTrains(data, trains2);
   debug += drawLiveTrains(trains2);
 
-  debugText = debug + '<br><br>' + debugText.substring(0, 6000);
-  $('#debugOutput').html(debugText);
+  debugInfo(debug + '<br>');
+}
+
+// Fix bad data from BART API
+function fixLiveTrains(data) {
+  //bart API shows MLBR as destination for trains going to SFO from Antioch and Pittsburg Center, only some time of the day
+  let pitt = asArray(data.station).find(station => station.abbr === 'PITT');
+  if (pitt) {
+    let pitt_sfia = asArray(pitt.etd).find(destination => destination.abbreviation === 'SFIA');
+    asArray(data.station).forEach(station => {
+      if (pitt_sfia && (station.abbr === 'ANTC' || station.abbr === 'PCTR')) {
+        asArray(station.etd).forEach(destination => {
+          if (destination.abbreviation === 'MLBR') {
+            destination.abbreviation = 'SFIA';
+            destination.destination = 'SF Airport';
+          }
+        });
+      }
+    });
+  }
 }
 
 function computeLiveTrains(data, trains) {
   var debug = '';
-  data.station.forEach(function(station) {
+  debug += normalizeTrains(data, trains);
+  debug += removeDuplicates(trains);
+  return debug;
+}
+
+// normalize trains data from BART API
+// trains is an array of trains, indexed by final route color + destination station
+// in: data.station[].etd[].estimate[]
+// out: trains[color_endDestStation][forStation]
+function normalizeTrains(data, trains) {
+  var debug = '';
+  asArray(data.station).forEach(function(station) {
     if (showingStation == station.abbr) {
       showStationInfo(station);
     }
@@ -147,7 +174,8 @@ function computeLiveTrains(data, trains) {
           }
 
           // in case there are more than one estimated train to the same destination
-          if (!trains[destKey][station.abbr]) {
+          let existingTrain = trains[destKey][station.abbr];
+          if (!existingTrain) {
             trains[destKey][station.abbr] = {
               color: estimate.color,
               destStation: destination.abbreviation,
@@ -157,11 +185,14 @@ function computeLiveTrains(data, trains) {
               etaMins: estimateMins,
               legMins: legMins,
               valid: true,
-              route: route,
+              trainIcon: route.icon,
               sta: station,
               etd: destination,
               est: estimate
             };
+          } else if (existingTrain.etaMins > estimateMins) {
+            // when multiple estimates for the same route, we take the earliest one
+            existingTrain.etaMins = estimateMins;
           }
         } else if (estimate.color != 'WHITE') { // ignore not in service trains
           debug += '<br>Link NotFound: ' + estimate.color + ': ' + station.abbr + '->' + destination.abbreviation + ',' + estimate.direction;
@@ -169,17 +200,26 @@ function computeLiveTrains(data, trains) {
       });
     });
   });
+  return debug;
+}
 
-  // remove duplicate entries
+// remove duplicate entries (same physical train reported at multiple stations with different ETA)
+function removeDuplicates(trains) {
+  var debug = '';
   for (var destIdx in trains) {
-    for (var stationIdx in trains[destIdx]) {
-      var train = trains[destIdx][stationIdx];
-      var prev = trains[destIdx][train.prevStation];
-      var next = trains[destIdx][train.nextStation];
-      if (prev && prev.etaMins < train.etaMins) {
-        train.valid = false;
-      } else if (train.etaMins > 10 && train.prevStation != stationIdx && next && next.etaMins < train.etaMins) {
-        debug += '<br> dir? ' + train.forStation + '/' + train.etaMins + ' next: ' + next.forStation + '/' + next.etaMins + ' -> ' + train.destStation;
+    let trainRoute = trains[destIdx];
+    for (var stationIdx in trainRoute) {
+      var train = trainRoute[stationIdx];
+      var prev = trainRoute[train.prevStation];
+      var next = trainRoute[train.nextStation];
+      if (prev && prev.etaMins <= train.etaMins) {
+        // Check if this is likely the same train by comparing ETA difference with travel time
+        var travelTime = routeTimes[train.prevStation] && routeTimes[train.prevStation][train.forStation];
+        var etaDiff = train.etaMins - prev.etaMins;
+        // If ETA difference is greater than travel time - 3 minutes, it's likely a different train
+        if (prev.etaMins + travelTime - 10 < train.etaMins) {
+          train.valid = false;
+        }
       }
     }
   }
@@ -189,30 +229,28 @@ function computeLiveTrains(data, trains) {
 function drawLiveTrains(trains) {
   var renewTrains = [];
   var debug = '';
-  for (var destIdx in trains) {
-    for (var stationIdx in trains[destIdx]) {
-      var train = trains[destIdx][stationIdx];
-      if (train.valid) {
-        var trainMarker = extractPreviousLiveTrain(train, liveTrains);
-        if (!trainMarker) {
-          trainMarker = createTrainMarker(train);
-          map.addLayer(trainMarker.marker);
-          // Store reference and add click handler
-          trainMarker.marker._trainMarkerRef = trainMarker;
-          trainMarker.marker.on('click', function() {
-            onTrainClick(this._trainMarkerRef);
-          });
+  var allTrains = orderTrains(trains);
 
-          debug += '<br>(add) ' + getTrainShortInfo(train);
-        } else {
-          // Existing train - update with new data
-          trainMarker.train = train;
-          updateTrainMarker(trainMarker);
-        }
-        renewTrains.push(trainMarker);
+  allTrains.forEach(function(train) {
+    if (train.valid) {
+      var trainMarker = extractPreviousLiveTrain(train, liveTrains);
+      if (!trainMarker) {
+        trainMarker = createTrainMarker(train);
+        map.addLayer(trainMarker.marker);
+        // Store reference and add click handler
+        trainMarker.marker._trainMarkerRef = trainMarker;
+        trainMarker.marker.on('click', function() {
+          onTrainClick(this._trainMarkerRef);
+        });
+        debug = debugAddedTrain(train, debug);
+      } else {
+        // Existing train - update with new data
+        trainMarker.train = train;
+        updateTrainMarker(trainMarker);
       }
+      renewTrains.push(trainMarker);
     }
-  }
+  });
   debug = removeLiveTrains(debug);
 
   liveTrains = renewTrains;
@@ -223,17 +261,67 @@ function drawLiveTrains(trains) {
   return debug;
 }
 
+// Flatten trains into a single array
+// ordered by color, destStation, and ordinal position within route
+function orderTrains(trains) {
+  var allTrains = [];
+  for (var destIdx in trains) {
+    for (var stationIdx in trains[destIdx]) {
+      allTrains.push(trains[destIdx][stationIdx]);
+    }
+  }
+
+  // Sort by color, destStation, and ordinal position within route
+  allTrains.sort(function(a, b) {
+    if (a.color !== b.color) {
+      return (a.color || '').localeCompare(b.color || '');
+    }
+    if (a.destStation !== b.destStation) {
+      return (a.destStation || '').localeCompare(b.destStation || '');
+    }
+    // Sort by ordinal position within the route
+    var aRoute = routes[a.color];
+    var bRoute = routes[b.color];
+    var aIdx = aRoute ? aRoute.stations.indexOf(a.forStation) : -1;
+    var bIdx = bRoute ? bRoute.stations.indexOf(b.forStation) : -1;
+    return aIdx - bIdx;
+  });
+  return allTrains;
+}
+
 function removeLiveTrains(debug) {
   liveTrains.forEach(function (trainMarker) {
     map.removeLayer(trainMarker.marker);
-    debug += '<br>(del) ' + getTrainShortInfo(trainMarker.train);
+    debug = debugDeletedTrains(trainMarker.train, debug);
   });
   liveTrains = [];
   return debug;
 }
 
+// the ! menans that the train was not expected to be added at this station, ie, not at the end of a leg
+function debugAddedTrain(train, debug) {
+  let label = (train.forStation == train.prevStation || ['DALY', 'SFIA'].includes(train.prevStation)) ? '(add ) ' : '(add!) ';
+  debug += '<br>' + label + getTrainShortInfo(train);
+  return debug;
+}
+
+// the ! menans that the train was not expected to be removed from this station, ie not at the end of a leg
+function debugDeletedTrains(train, debug) {
+  let label = (train.legMins == 0 && train.nextStation == train.destStation) ? '(del ) ' : '(del!) ';
+  debug += '<br>' + label + getTrainShortInfo(train);
+  return debug;
+}
+
 function getTrainShortInfo(train) {
-  return train.color + ": " + train.forStation + ' -> ' + train.destStation + ': ' + train.etaMins + "/" + train.legMins;
+  if (!train) return 'null';
+  let emoji = routes[train.color].emoji;
+  let travel = null;
+  if (train.legMins === 0) {
+    travel = train.forStation + '>' + train.nextStation;
+  } else {
+    travel = train.prevStation + '>' + train.forStation;
+  }
+  return emoji + " " + travel + '..' + train.destStation + ': ' + train.etaMins + "/" + train.legMins;
 }
 
 // search for train for a possible previous/same position from liveTrains
@@ -263,17 +351,11 @@ function getRouteInfo(color, curr, dest) {
     return null;
   }
 
-  var dirUp = currIdx < destIdx;
-  var nextIdx = Math.min(Math.max(currIdx + (
-    dirUp
-    ? 1
-    : -1), 0), stations.length - 1);
-  var prevIdx = Math.min(Math.max(currIdx - (
-    dirUp
-    ? 1
-    : -1), 0), stations.length - 1);
+  var dirUp = currIdx != destIdx ? currIdx < destIdx : destIdx != 0;
+  var nextIdx = clamp(currIdx + (dirUp ? 1 : -1), 0, stations.length - 1);
+  var prevIdx = clamp(currIdx - (dirUp ? 1 : -1), 0, stations.length - 1);
   let icon = dirUp ? route.iconUp : route.iconDown;
-  let prev = stations[prevIdx] ? stations[prevIdx] : '';
+  let prev = stations[prevIdx];
   let next = stations[nextIdx];
   return {icon: icon, prev: prev, next: next};
 }
@@ -397,13 +479,13 @@ function calculateRoutePercent(etaMins, legMins) {
   if (legMins <= 0) {
     return 1; // At station at the end of the leg if no legMins
   }
-  return Math.max(0, Math.min(1, (legMins - Math.max(0, etaMins)) / legMins)); // max/min/max 🤪
+  return clamp((legMins - Math.max(0, etaMins)) / legMins, 0, 1);
 }
 
 function createMarker(train, position) {
   var anchors = calculateIconAnchor(position);
   var icon = L.divIcon({
-    className: 'train-icon train-' + train.route.icon,
+    className: 'train-icon train-' + train.trainIcon,
     iconSize: [18, 14],
     iconAnchor: anchors.iconAnchor,
     popupAnchor: anchors.popupAnchor
@@ -522,7 +604,7 @@ function setTrainPopup(marker, train) {
     markerText += '<br>Next Station: <b>' + stations[station.abbr].name + '</b> in ' + estimate.minutes + ' min' + debug(' (total ' + threshold + ')');
   }
 
-  markerText += debug('<br> ' + estimate.color + '/' + estimate.direction + ', from: ' + fromStation + ', to: ' + station.abbr + ', final: ' + destination.abbreviation);
+  markerText += debug('<br> ' + getTrainShortInfo(train));
 
   if (estimate.delay > 0) {
     markerText += '<br>Delayed: <b>' + secondsToMins(estimate.delay) + '</b> mins.';
@@ -560,8 +642,19 @@ function moveTrains() {
 
       // Update icon anchor based on new bearing
       var anchors = calculateIconAnchor(newPosition);
-      trainMarker.marker.options.icon.options.iconAnchor = anchors.iconAnchor;
-      trainMarker.marker.options.icon.options.popupAnchor = anchors.popupAnchor;
+      var currentIcon = trainMarker.marker.options.icon;
+
+      // Create a new icon with updated anchors while preserving other properties
+      if (currentIcon.options.iconAnchor[0] !== anchors.iconAnchor[0]) {
+        var updatedIcon = L.divIcon({
+          className: currentIcon.options.className,
+          html: currentIcon.options.html,
+          iconSize: currentIcon.options.iconSize,
+          iconAnchor: anchors.iconAnchor,
+          popupAnchor: anchors.popupAnchor
+        });
+        trainMarker.marker.setIcon(updatedIcon);
+      }
     }
   });
 }
@@ -702,76 +795,20 @@ function displayTrainETAs(train, routeInfo) {
 }
 
 /*----------------------------------------------------------------------*\
-    Save/Load JSON Data
-\*----------------------------------------------------------------------*/
-var lastReceivedData = null;
-
-function saveCurrentData() {
-  if (!lastReceivedData) {
-    console.log('No data available to save');
-    return;
-  }
-
-  var now = new Date();
-  var timestamp = now.getFullYear() +
-    String(now.getMonth() + 1).padStart(2, '0') +
-    String(now.getDate()).padStart(2, '0') + '_' +
-    String(now.getHours()).padStart(2, '0') +
-    String(now.getMinutes()).padStart(2, '0') +
-    String(now.getSeconds()).padStart(2, '0');
-  var filename = 'bart_' + timestamp + '.json';
-
-  // Convert to formatted JSON string
-  var jsonString = JSON.stringify(lastReceivedData, null, 2);
-
-  // Create blob and download link
-  var blob = new Blob([jsonString], { type: 'application/json' });
-  var url = URL.createObjectURL(blob);
-  var a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-}
-
-function loadDataFromFile(input) {
-  if (!input.files || !input.files[0]) {
-    return;
-  }
-
-  var file = input.files[0];
-  var reader = new FileReader();
-
-  reader.onload = function(e) {
-    try {
-      var data = JSON.parse(e.target.result);
-      console.log('Loaded JSON from file: ' + file.name);
-      lastProcTime = "Manual"
-      removeLiveTrains()
-      processBARTjson(data);
-    } catch (err) {
-      console.error('Error parsing JSON file:', err);
-    }
-  };
-
-  reader.readAsText(file);
-  // Reset the input so the same file can be loaded again
-  input.value = '';
-}
-
-function storeBartData(data) {
-  lastReceivedData = data;
-}
-
-/*----------------------------------------------------------------------*\
     Main
 \*----------------------------------------------------------------------*/
 function debug(text) {
   return debugMode
     ? text
     : '';
+}
+
+function debugInfo(text) {
+  if (text === "<clear>") {
+    debugText = "";
+  }
+  debugText = text + '<br>' + debugText.substring(0, 30_000);
+  $('#debugOutput').html(debugText);
 }
 
 function sizeWindow() {
